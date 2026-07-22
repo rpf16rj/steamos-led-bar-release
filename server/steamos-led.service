@@ -1,0 +1,12 @@
+[Unit]
+Description=SteamOS LED bar forwarder
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/steamos-led-server/led_server.py --device /dev/valve-leds-shim --port 9876 --leds __NUM_LEDS__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

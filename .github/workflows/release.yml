@@ -1,0 +1,52 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release archive
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          ARCHIVE="steamos-led-bar-${TAG}.tar.gz"
+          tar -czf "$ARCHIVE" \
+            --exclude='.git' \
+            --exclude='.github' \
+            -C "$(dirname "$PWD")" "$(basename "$PWD")"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Release ${{ env.TAG }}"
+          body: |
+            ## RGB Led Bar Replication for SteamOS — ${{ env.TAG }}
+
+            ### Installation
+            ```bash
+            git clone https://github.com/rpf16rj/steamos-led-bar-release.git
+            cd steamos-led-bar-release
+            sudo ./install.sh
+            ```
+
+            Or download the archive below and extract it.
+
+            ### What's included
+            - Kernel module source (`leds-valve-shim`)
+            - LED server (`led_server.py`) + systemd service
+            - Pre-built ESP8266 firmware binary
+            - Install/uninstall/flash scripts
+          files: ${{ env.ARCHIVE }}
+          draft: false
+          prerelease: false
