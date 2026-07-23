@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.1
+
+### Fixed
+- Audio VU now waits for the user PipeWire session after boot instead of disabling itself permanently
+- Audio capture automatically reconnects if `pw-record` or the default audio sink becomes unavailable
+- Notification overlay now waits for and reconnects to the user session DBus after boot
+- Audio level and peak state reset cleanly while capture is reconnecting
+
 ## v1.1.0
 
 ### Added

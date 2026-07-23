@@ -13,6 +13,7 @@ import os
 import selectors
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -261,18 +262,27 @@ def start_notification_listener():
 
     def dbus_thread():
         DBusGMainLoop(set_as_default=True)
-        bus = dbus.SessionBus()
-        bus.add_signal_receiver(
-            on_notification,
-            dbus_interface="org.freedesktop.Notifications",
-            signal_name="Notify",
-            bus_name="org.freedesktop.Notifications",
-            path="/org/freedesktop/Notifications"
-        )
-        loop = GLib.MainLoop()
+        waiting_logged = False
         while running:
-            ctx = loop.get_context()
-            ctx.iteration(True)
+            try:
+                bus = dbus.SessionBus()
+                bus.add_signal_receiver(
+                    on_notification,
+                    dbus_interface="org.freedesktop.Notifications",
+                    signal_name="Notify",
+                    bus_name="org.freedesktop.Notifications",
+                    path="/org/freedesktop/Notifications"
+                )
+                print("Notifications: connected to session DBus", file=sys.stderr)
+                loop = GLib.MainLoop()
+                while running:
+                    loop.get_context().iteration(True)
+                return
+            except dbus.exceptions.DBusException:
+                if not waiting_logged:
+                    print("Notifications: waiting for user session DBus", file=sys.stderr)
+                    waiting_logged = True
+                time.sleep(5)
 
     t = threading.Thread(target=dbus_thread, daemon=True)
     t.start()
@@ -316,56 +326,61 @@ def start_audio_monitor():
 
     def audio_thread():
         global audio_level, audio_peak, audio_process
-        sink_id = find_default_sink_id()
-        if not sink_id:
-            print("No default audio sink found, audio overlay disabled", file=sys.stderr)
-            return
+        rate = 48000
+        samples_per_update = rate // 50
+        chunk_bytes = samples_per_update * 2
+        waiting_logged = False
 
-        RATE = 48000  # native rate for minimal latency
-        # Read ~50 updates/sec: 48000/50 = 960 samples per chunk
-        SAMPLES_PER_UPDATE = RATE // 50
-        CHUNK_BYTES = SAMPLES_PER_UPDATE * 2  # s16 = 2 bytes/sample
+        while running:
+            sink_id = find_default_sink_id()
+            if not sink_id:
+                if not waiting_logged:
+                    print("Audio: waiting for PipeWire default sink", file=sys.stderr)
+                    waiting_logged = True
+                time.sleep(5)
+                continue
 
-        try:
-            # pw-record with stream.capture.sink=true captures audio from a sink
-            audio_process = subprocess.Popen(
-                ["pw-record", "--target", sink_id,
-                 "-P", "{ stream.capture.sink = true }",
-                 "--rate", str(RATE), "--channels", "1", "--format", "s16", "-"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-            )
-            print(f"Audio: using pw-record on sink {sink_id} at {RATE}Hz "
-                  f"({SAMPLES_PER_UPDATE} samples/update)", file=sys.stderr)
-        except OSError as e:
-            print(f"pw-record not available ({e}), audio overlay disabled", file=sys.stderr)
-            return
+            try:
+                audio_process = subprocess.Popen(
+                    ["pw-record", "--target", sink_id,
+                     "-P", "{ stream.capture.sink = true }",
+                     "--rate", str(rate), "--channels", "1", "--format", "s16", "-"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                )
+                header = audio_process.stdout.read(44)
+                if len(header) < 44:
+                    raise RuntimeError("incomplete WAV header")
 
-        # Skip WAV header (44 bytes)
-        header = audio_process.stdout.read(44)
-        if len(header) < 44:
-            print("Audio: failed to read WAV header from pw-record", file=sys.stderr)
-            return
+                print(f"Audio: using pw-record on sink {sink_id} at {rate}Hz "
+                      f"({samples_per_update} samples/update)", file=sys.stderr)
+                waiting_logged = False
 
-        import struct
-        while running and audio_process.poll() is None:
-            data = audio_process.stdout.read(CHUNK_BYTES)
-            if len(data) < 2:
-                break
-            # Calculate RMS of the chunk for accurate level
-            n_samples = len(data) // 2
-            samples = struct.unpack(f'<{n_samples}h', data[:n_samples * 2])
-            rms = (sum(s * s for s in samples) / n_samples) ** 0.5
-            level = min(rms / 32768.0 * 6.0, 1.0)  # amplify for VU visibility
-            with overlay_lock:
-                audio_level = audio_level * 0.3 + level * 0.7  # fast attack
-                # Peak hold with decay
-                if level > audio_peak:
-                    audio_peak = level
-                else:
-                    audio_peak = max(0.0, audio_peak - 0.03)
+                while running and audio_process.poll() is None:
+                    data = audio_process.stdout.read(chunk_bytes)
+                    if len(data) < 2:
+                        break
+                    n_samples = len(data) // 2
+                    samples = struct.unpack(f'<{n_samples}h', data[:n_samples * 2])
+                    rms = (sum(s * s for s in samples) / n_samples) ** 0.5
+                    level = min(rms / 32768.0 * 6.0, 1.0)
+                    with overlay_lock:
+                        audio_level = audio_level * 0.3 + level * 0.7
+                        if level > audio_peak:
+                            audio_peak = level
+                        else:
+                            audio_peak = max(0.0, audio_peak - 0.03)
+            except (OSError, RuntimeError) as e:
+                print(f"Audio: capture unavailable ({e}), retrying", file=sys.stderr)
+            finally:
+                if audio_process and audio_process.poll() is None:
+                    audio_process.terminate()
+                audio_process = None
+                with overlay_lock:
+                    audio_level = 0.0
+                    audio_peak = 0.0
 
-        if audio_process:
-            audio_process.terminate()
+            if running:
+                time.sleep(5)
 
     t = threading.Thread(target=audio_thread, daemon=True)
     t.start()
