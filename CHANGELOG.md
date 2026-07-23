@@ -30,6 +30,11 @@
 - Server now sends keepalive frames every 5s to prevent ESP TCP watchdog from firing
 - Client sockets use blocking mode with timeout instead of non-blocking (fixes send errors)
 - TCP_NODELAY enabled for lower latency LED updates
+- VU meter direction corrected (fills right→left: green→yellow→red)
+- Temperature overlay now uses only last 2 LEDs permanently (no more alternating)
+- VU meter area shrinks proportionally when temperature LEDs are active
+- Game Mode brightness_scale is always respected by overlays
+- Smooth 300ms crossfade transition when switching between modes (VU start/stop, temp on/off)
 
 ## v1.0.0
 

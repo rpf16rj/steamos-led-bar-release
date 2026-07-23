@@ -60,6 +60,12 @@ audio_level = 0.0  # 0.0 to 1.0
 audio_peak = 0.0  # peak hold for VU
 audio_process = None
 
+# Transition state
+TRANSITION_SPEED = 0.08  # blend factor per frame (~20fps → ~250ms transition)
+prev_overlay_frame = None  # previous frame for crossfade
+current_mode = "gamemode"  # tracks active mode: gamemode, vu, temp, vu+temp, notif
+last_mode_change = 0.0
+
 
 # ══════════════════════════════════════════════════════════════════
 # Network helpers
@@ -376,36 +382,40 @@ OFFSET_BRIGHTNESS_SCALE = 26
 EFFECT_MANUAL = 1
 
 
-def force_manual_mode(data):
-    """Force snapshot to manual mode so ESP renders raw pixels without local effects."""
+def force_manual_mode(data, preserve_brightness=True):
+    """Force snapshot to manual mode so ESP renders raw pixels without local effects.
+    Preserves the Game Mode brightness_scale by default."""
     data[OFFSET_ENABLED] = 1
     data[OFFSET_EFFECT] = EFFECT_MANUAL
-    data[OFFSET_BRIGHTNESS_SCALE] = 255
+    if not preserve_brightness:
+        data[OFFSET_BRIGHTNESS_SCALE] = 255
 
 
 def render_vu_meter(data, out_leds, level, peak):
-    """Render a VU meter: LEDs fill from left to right based on audio level.
-    Color: green (low) → yellow (mid) → red (high).
+    """Render a VU meter: LEDs fill from right to left based on audio level.
+    Color: green (right/low) → yellow (mid) → red (left/high).
     """
     force_manual_mode(data)
     lit_count = level * out_leds  # fractional number of lit LEDs
     peak_led = int(peak * (out_leds - 1))  # peak indicator position
 
     for i in range(out_leds):
+        # Reverse: physical LED 0 = highest level (red), LED N-1 = lowest (green)
+        vi = (out_leds - 1) - i  # virtual index for color/level calc
         off = PIXELS_OFFSET + i * PIXEL_SIZE
-        # VU color gradient per LED position
-        t = i / max(out_leds - 1, 1)  # 0.0 to 1.0
+        # VU color gradient per virtual position
+        t = vi / max(out_leds - 1, 1)  # 0.0 (right/green) to 1.0 (left/red)
         if t < 0.5:
             r, g, b = int(255 * t * 2), 255, 0  # green → yellow
         else:
             r, g, b = 255, int(255 * (1 - (t - 0.5) * 2)), 0  # yellow → red
 
-        if i < int(lit_count):
+        if vi < int(lit_count):
             br = 255
-        elif i < lit_count + 1 and lit_count > 0:
+        elif vi < lit_count + 1 and lit_count > 0:
             # Partial LED (fractional brightness)
             br = int(255 * (lit_count - int(lit_count)))
-        elif i == peak_led and peak > 0.05:
+        elif vi == peak_led and peak > 0.05:
             # Peak hold indicator
             br = 180
         else:
@@ -417,16 +427,32 @@ def render_vu_meter(data, out_leds, level, peak):
         data[off + 3] = br
 
 
+def blend_frames(frame_a, frame_b, factor, out_leds):
+    """Crossfade pixel data between two frames. factor=0.0 → all A, factor=1.0 → all B."""
+    result = bytearray(frame_a)
+    # Copy header from frame_b (the target)
+    result[:PIXELS_OFFSET] = frame_b[:PIXELS_OFFSET]
+    for i in range(out_leds):
+        off = PIXELS_OFFSET + i * PIXEL_SIZE
+        for c in range(PIXEL_SIZE):
+            a = frame_a[off + c]
+            b = frame_b[off + c]
+            result[off + c] = int(a + (b - a) * factor)
+    return bytes(result)
+
+
 def apply_overlays(snapshot, out_leds):
     """Apply overlay layers on top of the remapped snapshot.
 
     Priority:
       1. Notification (always highest)
-      2. Audio VU meter (main overlay when audio is playing)
-      3. Temperature (only when >=65°C; alternates with audio every 10s)
+      2. Audio VU meter + Temperature (coexist: VU on first N LEDs, temp on last 2)
       Below 65°C with no audio: Game Mode prevails.
+
+    Smooth crossfade on mode transitions.
     """
     global notif_active, temp_blink_state
+    global prev_overlay_frame, current_mode, last_mode_change
 
     data = bytearray(snapshot)
     now = time.time()
@@ -447,41 +473,33 @@ def apply_overlays(snapshot, out_leds):
                     data[off + 1] = g
                     data[off + 2] = b
                     data[off + 3] = br
+                new_mode = "notif"
+                if current_mode != new_mode:
+                    last_mode_change = now
+                    current_mode = new_mode
+                    prev_overlay_frame = snapshot
                 return bytes(data)
 
         has_audio = audio_overlay_enabled and audio_level > 0.02
         has_temp = temp_overlay_enabled and temp_color is not None  # None means <65°C
 
+        # Determine new mode
         if has_audio and has_temp:
-            # Both active: alternate every 10s
-            cycle = int(now / TEMP_SHOW_CYCLE) % 2
-            if cycle == 0:
-                # Show audio VU meter
-                render_vu_meter(data, out_leds, audio_level, audio_peak)
-            else:
-                # Show temperature
-                force_manual_mode(data)
-                r, g, b = temp_color
-                if temp_blink:
-                    temp_blink_state = int(now * 4) % 2 == 0
-                    br = 255 if temp_blink_state else 0
-                else:
-                    br = 255
-                for i in range(out_leds):
-                    off = PIXELS_OFFSET + i * PIXEL_SIZE
-                    data[off + 0] = r
-                    data[off + 1] = g
-                    data[off + 2] = b
-                    data[off + 3] = br
-            return bytes(data)
-
+            new_mode = "vu+temp"
         elif has_audio:
-            # Audio only (temp < 65°C): show VU meter
-            render_vu_meter(data, out_leds, audio_level, audio_peak)
-            return bytes(data)
-
+            new_mode = "vu"
         elif has_temp:
-            # Temperature only (no audio): show temp bar
+            new_mode = "temp"
+        else:
+            new_mode = "gamemode"
+
+        # Audio VU meter (uses all LEDs except last 2 if temp is active)
+        if has_audio:
+            vu_leds = out_leds - 2 if has_temp else out_leds
+            render_vu_meter(data, vu_leds, audio_level, audio_peak)
+
+        # Temperature indicator: last 2 LEDs permanently
+        if has_temp:
             force_manual_mode(data)
             r, g, b = temp_color
             if temp_blink:
@@ -489,12 +507,29 @@ def apply_overlays(snapshot, out_leds):
                 br = 255 if temp_blink_state else 0
             else:
                 br = 255
-            for i in range(out_leds):
+            for i in range(out_leds - 2, out_leds):
                 off = PIXELS_OFFSET + i * PIXEL_SIZE
                 data[off + 0] = r
                 data[off + 1] = g
                 data[off + 2] = b
                 data[off + 3] = br
+
+        # Handle mode transition with crossfade
+        if current_mode != new_mode:
+            prev_overlay_frame = latest if latest else snapshot
+            last_mode_change = now
+            current_mode = new_mode
+
+        # Apply crossfade if in transition
+        if prev_overlay_frame and (now - last_mode_change) < 0.3:
+            # 0.3s transition duration
+            progress = min((now - last_mode_change) / 0.3, 1.0)
+            target = bytes(data)
+            return blend_frames(prev_overlay_frame, target, progress, out_leds)
+        else:
+            prev_overlay_frame = None
+
+        if has_audio or has_temp:
             return bytes(data)
 
     # No overlay active: Game Mode prevails
