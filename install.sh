@@ -124,6 +124,29 @@ read -rp "Server TCP port? [9876]: " PORT
 PORT=${PORT:-9876}
 echo "→ Using port $PORT"
 
+# ── Prompt for overlay features ────────────────────────────────
+echo ""
+echo "  Overlay features (enhance LED bar beyond Game Mode):"
+echo "    temp   — Color bar by CPU/GPU temperature"
+echo "    notify — Flash on Steam achievements/messages"
+echo "    audio  — Pulse brightness with system audio"
+echo ""
+OVERLAYS=""
+read -rp "Enable temperature overlay? [Y/n]: " OPT_TEMP
+if [[ "${OPT_TEMP,,}" != "n" && "${OPT_TEMP,,}" != "no" ]]; then
+    OVERLAYS="$OVERLAYS --temp"
+fi
+read -rp "Enable notification overlay? [Y/n]: " OPT_NOTIFY
+if [[ "${OPT_NOTIFY,,}" != "n" && "${OPT_NOTIFY,,}" != "no" ]]; then
+    OVERLAYS="$OVERLAYS --notify"
+fi
+read -rp "Enable audio reactive overlay? [Y/n]: " OPT_AUDIO
+if [[ "${OPT_AUDIO,,}" != "n" && "${OPT_AUDIO,,}" != "no" ]]; then
+    OVERLAYS="$OVERLAYS --audio"
+fi
+OVERLAYS=$(echo "$OVERLAYS" | xargs)  # trim
+echo "→ Overlays: ${OVERLAYS:-none}"
+
 # ── 1. Install kernel module ──────────────────────────────────
 echo ""
 echo "══════════════════════════════════════════════"
@@ -156,9 +179,17 @@ echo "════════════════════════�
 # Stop existing service if running.
 systemctl stop "$SERVICE_NAME" 2>/dev/null || true
 
+# Detect the primary desktop user (first UID >= 1000)
+DESK_USER=$(awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd)
+DESK_UID=$(id -u "$DESK_USER" 2>/dev/null || echo "1000")
+echo "→ Service will run as user: $DESK_USER (UID $DESK_UID)"
+
 # Generate service file with user settings.
 sed -e "s/__NUM_LEDS__/$NUM_LEDS/g" \
-    -e "s/--port 9876/--port $PORT/g" \
+    -e "s/__PORT__/$PORT/g" \
+    -e "s/__USER__/$DESK_USER/g" \
+    -e "s/__UID__/$DESK_UID/g" \
+    -e "s/__OVERLAYS__/$OVERLAYS/g" \
     "$SERVER_DIR/steamos-led.service" > "$SERVICE_FILE"
 
 systemctl daemon-reload

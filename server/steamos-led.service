@@ -1,10 +1,15 @@
 [Unit]
 Description=SteamOS LED bar forwarder
-After=network.target
+After=network.target pipewire.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/steamos-led-server/led_server.py --device /dev/valve-leds-shim --port 9876 --leds __NUM_LEDS__
+User=__USER__
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/__UID__/bus
+Environment=XDG_RUNTIME_DIR=/run/user/__UID__
+Environment=PULSE_SERVER=unix:/run/user/__UID__/pulse/native
+ExecStartPre=+/bin/chmod 666 /dev/valve-leds-shim
+ExecStart=/usr/bin/python3 /opt/steamos-led-server/led_server.py --device /dev/valve-leds-shim --port __PORT__ --leds __NUM_LEDS__ __OVERLAYS__
 Restart=always
 RestartSec=5
 

@@ -18,11 +18,11 @@ jobs:
       - name: Create release archive
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          ARCHIVE="steamos-led-bar-${TAG}.tar.gz"
+          ARCHIVE="/tmp/steamos-led-bar-${TAG}.tar.gz"
           tar -czf "$ARCHIVE" \
             --exclude='.git' \
             --exclude='.github' \
-            -C "$(dirname "$PWD")" "$(basename "$PWD")"
+            -C "$GITHUB_WORKSPACE" .
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 

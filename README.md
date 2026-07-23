@@ -84,6 +84,36 @@ Connect to it and open `http://192.168.4.1` to configure:
 - **Auto-reconnect:** ESP automatically reconnects if the server restarts
 - **Web dashboard:** monitor connection status and test LEDs from the ESP's web UI
 
+### Overlay features (v1.1.0)
+
+Optional smart overlays that enhance the LED bar beyond Game Mode:
+
+| Overlay | Flag | Description |
+|---|---|---|
+| **Temperature** | `--temp` | Full bar changes color by CPU/GPU temp: green (<65°C) → yellow → red (65–80°C) → red blinking (>80°C) |
+| **Notifications** | `--notify` | Flash gold (achievements) or blue (messages) for 3.5s, then return to normal |
+| **Audio reactive** | `--audio` | LED brightness pulses with system audio (PipeWire/PulseAudio, no microphone) |
+
+Priority: Notification > Audio VU > Temperature > Game Mode base effect.
+
+Below 65°C with no audio playing, Game Mode colors are shown as-is.
+
+The installer asks which overlays to enable:
+```
+Enable temperature overlay? [Y/n]:
+Enable notification overlay? [Y/n]:
+Enable audio reactive overlay? [Y/n]:
+```
+
+To change overlays after installation, edit the service file:
+```bash
+sudo systemctl edit steamos-led --full
+```
+Add or remove `--temp`, `--notify`, `--audio` from the `ExecStart=` line, then:
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart steamos-led
+```
+
 ## Wiring
 
 ### Power supply
@@ -147,6 +177,12 @@ sudo ./uninstall.sh
 ```
 
 The script handles the SteamOS read-only filesystem automatically (disables it, removes files, re-enables it).
+
+## Support
+
+If you find this project useful, consider buying me a coffee:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/rpf16rj)
 
 ## License
 
