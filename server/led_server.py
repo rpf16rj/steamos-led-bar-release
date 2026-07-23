@@ -79,7 +79,8 @@ def broadcast(snapshot):
     for c in clients:
         try:
             c.sendall(snapshot)
-        except (BrokenPipeError, OSError):
+        except (BrokenPipeError, OSError) as e:
+            print(f"client send error: {e}", file=sys.stderr)
             dead.append(c)
     for c in dead:
         remove_client(c)
@@ -88,7 +89,8 @@ def broadcast(snapshot):
 def accept_client(server):
     conn, addr = server.accept()
     print(f"client connected: {addr}", file=sys.stderr)
-    conn.setblocking(False)
+    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    conn.settimeout(2.0)  # blocking with timeout for sends
     if latest:
         try:
             conn.sendall(latest)
@@ -572,28 +574,35 @@ def main():
     if initial:
         latest = initial
 
+    last_broadcast = 0.0
+    BROADCAST_MIN_INTERVAL = 0.05  # 20fps max broadcast rate
+    KEEPALIVE_INTERVAL = 5.0       # send at least every 5s to keep TCP alive
+    last_raw_snap = initial
+
     while running:
         snap = read_snapshot(led_fd)
         if snap:
-            remapped = remap_snapshot(snap, num_output_leds)
+            last_raw_snap = snap
 
-            # Update temperature if enabled
-            if temp_overlay_enabled:
-                update_temperature()
+        # Update temperature if enabled
+        if temp_overlay_enabled:
+            update_temperature()
 
-            # Apply overlays
+        # Apply overlays on the latest raw snapshot
+        if last_raw_snap:
+            remapped = remap_snapshot(last_raw_snap, num_output_leds)
             final = apply_overlays(remapped, num_output_leds)
-
-            if final != latest:
-                latest = final
-                broadcast(latest)
         else:
-            # Even without new snapshot, overlays may change (blink, audio)
-            if latest and (temp_overlay_enabled or notif_overlay_enabled or audio_overlay_enabled):
-                final = apply_overlays(latest, num_output_leds)
-                if final != latest:
-                    latest = final
-                    broadcast(latest)
+            final = latest
+
+        now = time.time()
+        changed = final != latest
+        keepalive_due = (now - last_broadcast) >= KEEPALIVE_INTERVAL
+
+        if final and (changed or keepalive_due) and (now - last_broadcast >= BROADCAST_MIN_INTERVAL):
+            latest = final
+            broadcast(latest)
+            last_broadcast = now
 
         try:
             events = sel.select(timeout=POLL_INTERVAL)

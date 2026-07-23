@@ -24,7 +24,12 @@
 ### Fixed (ESP8266 firmware)
 - **Wi-Fi auto-reconnect** — checks every 10s, reconnects automatically if Wi-Fi drops
 - **TCP watchdog** — if no data received for 30s, disconnects and retries TCP connection
-- **Modem sleep** — enables Wi-Fi modem sleep to reduce power consumption (~15mA saved)
+- **Wi-Fi sleep disabled** — ensures reliable TCP streaming (modem sleep caused packet loss)
+
+### Fixed (LED server)
+- Server now sends keepalive frames every 5s to prevent ESP TCP watchdog from firing
+- Client sockets use blocking mode with timeout instead of non-blocking (fixes send errors)
+- TCP_NODELAY enabled for lower latency LED updates
 
 ## v1.0.0
 
