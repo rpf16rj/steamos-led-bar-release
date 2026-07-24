@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.2
+
+### Fixed
+- Patrol effect now uses subpixel interpolation for smooth movement between LEDs
+- Patrol no longer pauses on duplicated positions at either end of the strip
+- Animated effects now render exclusively on a stable 50 FPS scheduler instead of receiving irregular extra frames from TCP snapshots
+- Effect frame timing compensates for loop jitter without accumulating drift
+- Release workflow now uses only the matching version section from `CHANGELOG.md` instead of repeating a fixed body
+- Release workflow validates that the pushed tag has a corresponding changelog entry
+- Updated `actions/checkout` to v5 to remove the Node.js 20 deprecation warning
+
 ## v1.1.1
 
 ### Fixed
