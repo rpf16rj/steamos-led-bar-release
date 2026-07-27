@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.0
+
+### Added
+- **Boot animation** — 40-second rainbow pulsating animation on ESP8266 startup
+- **Power on/off animation** — 2-second warm color fade-in/out around the boot sequence and SteamOS shutdown
+- **Graceful shutdown signal** — server notifies the ESP8266 over TCP when SteamOS shuts down, so LEDs turn off and stay off until the server reconnects
+
+### Changed
+- Power off animation sets a `systemShuttingDown` flag to prevent LED flicker until the server reconnects
+
+### Fixed
+- Boot animation no longer appears static or low FPS
+- Shutdown signal now reliably reaches the ESP8266 (server waits 1s before closing the connection)
+- LEDs no longer keep animating after a SteamOS shutdown
+- ESP8266 reconnections are tracked correctly across multiple sessions
+
 ## v1.1.2
 
 ### Fixed

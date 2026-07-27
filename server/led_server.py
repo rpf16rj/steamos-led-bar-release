@@ -32,6 +32,7 @@ clients = []
 latest = None
 running = True
 num_output_leds = DEFAULT_LEDS
+esp_client = None  # TCP connection to ESP8266
 
 # ── Overlay state ──────────────────────────────────────────────
 overlay_lock = threading.Lock()
@@ -73,12 +74,15 @@ last_mode_change = 0.0
 # ══════════════════════════════════════════════════════════════════
 
 def remove_client(sock):
+    global esp_client
     try:
         sock.close()
     except Exception:
         pass
     if sock in clients:
         clients.remove(sock)
+    if sock is esp_client:
+        esp_client = None
 
 
 def broadcast(snapshot):
@@ -94,8 +98,15 @@ def broadcast(snapshot):
 
 
 def accept_client(server):
+    global esp_client
     conn, addr = server.accept()
     print(f"client connected: {addr}", file=sys.stderr)
+
+    # This server only ever receives connections from ESP8266 clients,
+    # so any accepted connection is tracked as the (latest) ESP client.
+    esp_client = conn
+    print(f"ESP8266 tracked: {addr}", file=sys.stderr)
+
     conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     conn.settimeout(2.0)  # blocking with timeout for sends
     if latest:
@@ -105,6 +116,27 @@ def accept_client(server):
             conn.close()
             return
     clients.append(conn)
+
+
+def notify_esp_shutdown():
+    """Send shutdown signal to ESP8266 via existing TCP connection."""
+    global esp_client
+    if esp_client:
+        try:
+            # Send special shutdown marker: 0x53 0x48 0x44 0x4E (SHDN in hex)
+            shutdown_marker = bytes([0x53, 0x48, 0x44, 0x4E])
+            esp_client.sendall(shutdown_marker)
+            print(f"Shutdown signal sent to ESP via TCP", file=sys.stderr)
+            time.sleep(1.0)  # Wait for ESP to process shutdown signal
+            esp_client.close()
+        except (BrokenPipeError, OSError) as e:
+            print(f"Failed to notify ESP shutdown: {e}", file=sys.stderr)
+            try:
+                esp_client.close()
+            except:
+                pass
+    else:
+        print(f"No ESP client connected for shutdown signal", file=sys.stderr)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -557,6 +589,9 @@ def apply_overlays(snapshot, out_leds):
 
 def shutdown(signum, frame):
     global running
+    print(f"Received signal {signum}, notifying ESP and shutting down", file=sys.stderr)
+    notify_esp_shutdown()
+    time.sleep(0.5)  # Give ESP time to receive signal
     running = False
 
 
