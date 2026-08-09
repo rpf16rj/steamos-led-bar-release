@@ -1,5 +1,13 @@
 # RGB Led Bar Replication for SteamOS
 
+> ## ⚠️ This project has been discontinued
+>
+> This project has been replaced by **[steamos-led-wled](https://github.com/rpf16rj/steamos-led-wled)** — a simpler solution that sends LED data directly to any [WLED](https://github.com/Aircoookie/WLED) device via UDP, no custom firmware needed.
+>
+> The new project includes all the same features (effects, overlays, animations) plus auto-discovery, a config file, and Decky Loader integration.
+
+---
+
 Replicate the Steam Machine's LED bar on an external WS2812/NeoPixel LED strip driven by an ESP8266, controlled by the Steam Game Mode LED customization menu.
 
 Compatible with any Linux distribution running Steam in Game Mode (SteamOS, BazziteOS, CachyOS, ChimeraOS, HoloISO, etc.).
